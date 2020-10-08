@@ -1,11 +1,29 @@
-const np = require('node-persist');
-const nc = require('node-cache');
+const _ = require('lodash');
+const Path = require('path');
 const NodeCache = require('node-cache');
 const StorageEngine = require('./storage');
+const Promise = require('bluebird');
 
-const createCache = async (opts = {}) => {
-	let storageOpts = opts.persist;
+const defaults = {
+	prefix: '',
+	async: false,
+	persist: {
+		dir: `.node-cache-persist/storage`
+	}
+};
+
+const storageLocations = {};
+
+const Cache = function (opts = {}) {
+	const Cache = this;
+
+	const storageOpts = opts.persist === true ? {} : (opts.persist ? opts.persist : null);
+	_.defaultsDeep(opts, defaults);
 	delete opts.persist;
+
+	if (storageOpts) {
+		_.defaultsDeep(storageOpts, defaults.persist);
+	}
 
 	// This setting determines whether the cache is synchronous
 	//   and eventually persistent, or asynchronous and reliably persistent
@@ -24,82 +42,161 @@ const createCache = async (opts = {}) => {
 	delete opts.async;
 	delete opts.prefix;
 
-	const caches = {};
-
 	const MemCache = new NodeCache(opts);
-	const Cache = {
-		set: MemCache.set,
-		mset: MemCache.mset,
-		take: MemCache.take
+
+	let exposedMethods = [ 'get', 'mget', 'set', 'mset', 'del', 'take', 'ttl', 'getTtl', 'keys', 'has', 'getStats', 'flushAll', 'flushStats' ];
+	let asyncMethods =   [ 'set', 'mset', 'merge', 'ttl', 'take' ];
+
+	let modeWrapper = (name, method) => {
+		let methodMode;
+		if (asyncMethods.indexOf(name) === -1) {
+			methodMode = 'sync';
+		} else {
+			methodMode = mode;
+		}
+		if (methodMode === 'async') {
+			return async (...args) => {
+				return method.apply(null, args);
+			};
+		} else {
+			return (...args) => {
+				return method.apply(null, args);
+			};
+		};
 	};
 
-	for (let key in MemCache) {
+	for (let i = 0; i < exposedMethods.length; ++i) {
 		((k) => {
 			if (typeof(MemCache[k]) === 'function') {
-				Cache[k] = (...args) => {
-					return MemCache[k].apply(null, args);
-				}
-			}
-		})(key);
-	}
+				Cache[k] = modeWrapper(k, MemCache[k]);
 
-	let convertTTL = (ttl, target) => {
-		if (!target) { throw new Error(`Must provide TTL mode to convert to`); }
-		return ttl ? (target === 'persist' ? (ttl / 1000) : (ttl * 1000)) : undefined;
-	};
+				/* (...args) => {
+					return modeWrapper(MemCache[k])(args);
+				}; */
+			}
+		})(exposedMethods[i]);
+	}
 
 	if (storageOpts) {
-		if (!npOpts.dir) {
-			throw new Error(`You must specify a location for node-persist to store the data (node-persist default: .node-persist/storage)`);
+		if (opts.useClones === false) {
+			console.warn(`By definition, data retrieved from persistent backup will be clones of the original!`);
+		}
+		if (prefix) {
+			storageOpts.dir = Path.join(storageOpts.dir, prefix);
+		}
+		if (storageLocations[storageOpts.dir]) {
+			throw new Error(`Cannot re-use directory ${storageOpts.dir}`);
 		}
 
-		const Storage = new StorageEngine()
-		await Storage.init();
+		const Storage = new StorageEngine(storageOpts, Cache);
+		storageLocations[storageOpts.dir] = Storage;
 
-		// Load all data in Storage into the Cache when initialized
-		Storage.forEach((datum) => {
-			// node-persist stores TTLs as seconds since Unix epoch
-			// node-cache stores TTLs as milliseconds since Unix epoch
-			MemCache.set(datum.key, datum.value, convertTTL(datum.ttl, 'cache'));
+		// Overwrite .ttl so it calls Storage.onTtl
+		Cache.ttl = modeWrapper('ttl', (key, ttl = opts.stdTTL) => {
+			let storage = Storage.onTtl(key, ttl)
+			,	memCache = () => { MemCache.ttl(key, ttl); };
+
+			if (mode === 'async') {
+				return storage.then(memCache);
+			} else {
+				return memCache();
+			}
 		});
 
-		// Overwrite Cache.set with custom version
-		// We have to do this because node-cache
-		//   doesn't include the TTL in its on("set") event
-		Cache.set = async (key, value, ttl) => {
-			// Get the node-cache standard TTL so we can
-			//   pass it along to node-persist too
-			if (ttl === undefined && ncOpts.stdTTL) {
-				ttl = ncOpts.stdTTL;
+		if (mode === 'async') { // In async mode, .set and .mset return once data is persisted
+			// Overwrite Cache.set with async version
+			Cache.set = async (key, val, ttl) => {
+				await Storage.onSet(key, val, ttl);
+				return MemCache.set(key, val, ttl);
 			}
-			MemCache.set(key, value, ttl);
-			Storage.set(key, value, {
-				ttl: convertTTL(ttl, 'persist')
-			});
+
+			// Overwrite Cache.mset with async version
+			Cache.mset = async (data = [ ]) => {
+				data.forEach(async (datum) => {
+					await Cache.set(datum.key, datum.val, datum.ttl);
+				});
+				return true;
+			}
 		}
 
-		Cache.mset = async (input = [ ]) => {
-			for (let i = 0; i < input.length; ++i) {
-				await Cache.set(input[i].key, input[i].val, input[i].ttl);
+		MemCache.on("del", Storage.onDel);
+		MemCache.on("expired", Storage.onExpired);
+		MemCache.on("flush", Storage.onFlush);
+		if (Storage.onFlushStats) {
+			MemCache.on("flush_stats", Storage.onFlushStats);
+		}
+
+		Cache.load = Promise.try(() => {
+			return Storage.ready();
+		}).then((persistedData) => {
+			console.log(`Loading persisted data:`, persistedData);
+			return MemCache.mset(persistedData);
+		}).then(() => {
+			// Now that persisted data has been placed in the cache,
+			//   start persisting new data back to the backup
+			if (mode === 'sync') {
+				MemCache.on("set", Storage.onSet);
 			}
+
 			return true;
-		}
-
-		Cache.ttl = async (key, ttl) => {
-
-		};
-
-		MemCache.on("set", )
+		});
 	}
+
+	let verifyMerge = (val1, val2) => {
+		if (!_.isObject(val2)) {
+			throw new Error(`Cannot merge into a non-object`);
+		} else if (!_.isObject(val1)) {
+			throw new Error(`Cannot merge a non-object into an object`);
+		} else if (_.isArray(val1) && !_.isArray(val2)) {
+			throw new Error(`Cannot merge an array into a non-array`);
+		} else if (!_.isArray(val1) && _.isArray(val2)) {
+			throw new Error(`Cannot merge a non-array into an array`);
+		}
+		_.merge(val2, val1);
+	};
+
+	Cache.merge = modeWrapper('merge', (key, val) => {
+		let curVal = MemCache.get(key)
+		,	curTtl = MemCache.getTtl(key)
+		,	newTtl;
+		if (curTtl) {
+			newTtl = Date.now() - curTtl;
+		}
+		verifyMerge(val, curVal);
+		return Cache.set(key, curVal, curTtl);
+	});
+
+	Cache.dump = modeWrapper('dump', () => {
+		let result = {}
+		,	keys = Cache.keys();
+
+		keys.forEach((key) => {
+			let now = Date.now();
+			result[key] = {
+				val: Cache.get(key),
+				ts: Cache.getTtl(key)
+			};
+			if (result[key].ts) {
+				result[key].date = new Date(result[key].ts);
+				result[key].ttl = `${result[key].ts - now}ms`;
+			}
+		});
+
+		return result;
+	});
 
 	return Cache;
 };
 
 module.exports = Cache;
 
+module.exports.configure = (opts) => {
+	_.merge(defaults, opts);
+};
 
 
 
+/*
 // Use node-persist - sometimes corrupts data! DX
 const storage = require('node-persist');
 
@@ -117,57 +214,7 @@ const cwd = process.cwd();
 const memCache = new NodeCache({ deleteOnExpire: true });
 
 const runSubcacheTests = async () => {
-	const assert = require('assert');
-	const testCache1 = Service.generateSubcache('test1.');
-	const testCache2 = Service.generateSubcache('test2.');
 
-	// Ensure testing with nothing present
-	await testCache1.clear();
-	await testCache2.clear();
-
-	await testCache1.set('val1', 'test1val', { ttl: 1500 });
-
-	let val = await testCache1.get('val1');
-	assert.strictEqual(val, 'test1val', `testCache1.val1 was undefined`);
-
-	val = await testCache2.get('val1');
-	assert.strictEqual(val, undefined, `testCache2.val1 was defined`);
-
-	await testCache2.set('val1', 'test2val', { ttl: 1500 });
-
-	val = await testCache1.get('val1');
-	assert.strictEqual(val, 'test1val', `testCache1.val1 was updated`);
-
-	await testCache2.set('val2', 'test2val2', { ttl: 1500 });
-
-	let cacheKeys = await testCache1.keys();
-	assert.strictEqual(JSON.stringify(cacheKeys), JSON.stringify(['val1']), `testCache1 returned invalid set of keys`);
-
-	let cacheValues = await (testCache1.values());
-	assert.strictEqual(JSON.stringify(cacheValues), JSON.stringify(['test1val']), `testCache1 returned invalid set of keys`);
-
-	await Promise.all([
-		testCache1.set('concurrent-1', 'short-data'),
-		testCache1.set('concurrent-1', 'longer-data'),
-		testCache1.set('concurrent-1', {data: 'very long, much longer than you would have expected, but not actually that long in the end I suppose'}),
-		testCache1.set('concurrent-1', 1105),
-	]);
-
-	val = await testCache1.get('concurrent-1');
-	// There isn't even a value this *should* have, since we're doing concurrent operations
-
-	await testCache1.clear();
-	cacheKeys = await testCache1.keys();
-	assert.strictEqual(JSON.stringify(cacheKeys), JSON.stringify([]), `testCache1 returned non-empty set of keys`);
-
-	await new Promise((resolve, reject) => {
-		setTimeout(resolve, 2000);
-	});
-
-	val = await testCache2.get('val1');
-	assert.strictEqual(val, undefined, `testCache2.val1 was still defined after ttl expired`);
-
-	app.context.services.debug(`Passed all subCache tests`);
 };
 
 const Cache = {
@@ -257,7 +304,7 @@ const Service = (prefix) => {
 	}
 
 	const cache = {};
-};
+}; */
 
 /* const Service = {
 	getItem: async (key) => {
@@ -416,5 +463,3 @@ storage.init({
 		app.context.services.debug.error(`Error testing subCache:`, error);
 	});
 }); */
-
-module.exports = Service;
