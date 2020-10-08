@@ -1,0 +1,26 @@
+{
+  "name": "node-cache-persist",
+  "version": "0.0.1",
+  "description": "Cache using node-cache and backed by node-persist",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thelaughingwolf/node-cache-persist.git"
+  },
+  "keywords": [
+    "node",
+    "node-cache",
+    "node-persist",
+    "cache",
+    "ttl"
+  ],
+  "author": "Michael Bennett",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/thelaughingwolf/node-cache-persist/issues"
+  },
+  "homepage": "https://github.com/thelaughingwolf/node-cache-persist#readme"
+}
