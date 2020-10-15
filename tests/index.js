@@ -1,4 +1,22 @@
-const Cache = require('./index');
+const ncp = require('../index');
+
+ncp.engines.toggleTests();
+
+let Cache = new ncp({
+	persist: {
+		engine: 'node-persist'
+	}
+});
+
+Cache.set('test-key', 'hullo');
+
+console.log('test-key value:', Cache.get('test-key'));
+
+/* 
+
+
+
+const Cache = require('../index');
 const assert = require('assert');
 
 const runCacheTest = async (opts) => {

@@ -1,33 +1,36 @@
 {
-  "name": "node-cache-persist",
-  "version": "0.0.1",
-  "description": "Cache using node-cache and backed by node-persist",
+  "name": "node-persistent-cache",
+  "version": "1.0.0",
+  "description": "Cache using node-cache and backed by node-persist, with easy alternative engine installation",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/thelaughingwolf/node-cache-persist.git"
+    "url": "git+https://github.com/thelaughingwolf/node-persistent-cache.git"
   },
   "keywords": [
     "node",
-    "node-cache",
-    "node-persist",
     "cache",
+    "node-cache",
+    "persistent",
+    "node-persist",
     "ttl"
   ],
   "author": "Michael Bennett",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/thelaughingwolf/node-cache-persist/issues"
+    "url": "https://github.com/thelaughingwolf/node-persistent-cache/issues"
   },
-  "homepage": "https://github.com/thelaughingwolf/node-cache-persist#readme",
+  "homepage": "https://github.com/thelaughingwolf/node-persistent-cache#readme",
   "dependencies": {
-    "bluebird": "^3.7.2",
     "bottleneck": "^2.19.5",
     "lodash": "^4.17.20",
     "node-cache": "^5.1.2",
-    "node-persist": "^3.1.0"
-  }
+    "node-persist": "^3.1.0",
+    "tape": "^5.0.1",
+    "tape-promise": "^4.0.0"
+  },
+  "devDependencies": {}
 }
