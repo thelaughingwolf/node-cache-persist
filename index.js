@@ -11,10 +11,9 @@ log.info(`Running from CWD ${process.cwd()}`);
 
 const baseDefaults = {
 	logLevel: 'warn',
-	persist: {
-		engine: 'node-persist',
-		prefix: ''
-	}
+	prefix: '',
+	engine: 'node-persist',
+	engineOpts: {}
 };
 
 const NodePersistentCache = (opts) => {
@@ -49,11 +48,23 @@ const NodePersistentCache = (opts) => {
 	const generateCache = function (opts = {}) {
 		const Cache = this;
 
+		if (typeof opts === 'string') {
+			opts = {
+				prefix: opts
+			};
+		}
+
 		defaultsDeep(opts, defaults);
 
-		const storageOpts = (opts.persist === false || opts.persist === null) ? null : (opts.persist === true ? {} : opts.persist);
-
-		delete opts.persist;
+		// Extract storage opts
+		const storageOpts = {
+			engine: opts.engine,
+			prefix: opts.prefix,
+			engineOpts: opts.engineOpts
+		};
+		delete opts.engine;
+		delete opts.prefix;
+		delete opts.engineOpts;
 
 		log.debug(`Creating a new node-persistent-cache!`, { opts, storageOpts });
 

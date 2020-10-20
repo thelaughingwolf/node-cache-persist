@@ -28,8 +28,8 @@ const generateStorage = async function(storageOpts, cache) {
 
 	defaultsDeep(storageOpts, defaults);
 
-	const engineOpts = storageOpts.opts || {};
-	delete storageOpts.opts;
+	const engineOpts = storageOpts.engineOpts || {};
+	delete storageOpts.engineOpts;
 
 	if (storageOpts.prefix) {
 		engineOpts.prefix = storageOpts.prefix;
