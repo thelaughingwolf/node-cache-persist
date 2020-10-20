@@ -1,6 +1,6 @@
 {
   "name": "node-persistent-cache",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Cache using node-cache with easy engine installation",
   "main": "index.js",
   "scripts": {
@@ -28,9 +28,7 @@
   },
   "homepage": "https://github.com/thelaughingwolf/node-persistent-cache#readme",
   "dependencies": {
-    "bottleneck": "^2.19.5",
     "commander": "^6.1.0",
-    "lodash": "^4.17.20",
     "lodash.clonedeep": "^4.5.0",
     "lodash.defaultsdeep": "^4.6.1",
     "lodash.isobject": "^3.0.2",
