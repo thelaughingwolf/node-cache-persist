@@ -1,5 +1,8 @@
 const Engines = {};
+const log = require('loglevel');
+
 let testEngines = false;
+
 // This will register a class, which should have
 //   extended the engines/base-class definition
 const register = (name, engine) => {
@@ -17,10 +20,13 @@ const register = (name, engine) => {
 	Engines[name] = engine;
 
 	if (testEngines) {
+		log.debug(`testEngines is on, so test engine ${name}`);
 		testEngine(name);
 	}
 };
+
 const load = (name, opts, cache) => {
+	log.debug(`Loading new ${name} engine:`, opts);
 	if (!Engines[name]) {
 		throw new Error(`No persistent storage engine ${name} is registered`);
 	}
@@ -30,9 +36,9 @@ const load = (name, opts, cache) => {
 
 const testEngine = (name) => {
 	return require(`./test`)(name).then(() => {
-		console.log(`Passed all tests!`);
-	}).catch((failures) => {
-		console.error(`Oh dear, there were ${failures} failure${failures===1?'':'s'}`);
+		log.info(`Engine ${name} passed all tests!`);
+	}).catch((error) => {
+		log.error(`Oh dear, there were failures:`, error);
 	});
 };
 
@@ -45,15 +51,19 @@ module.exports.toggleTests = () => {
 	testEngines = true;
 
 	(async () => {
-		console.log(`Testing already-loaded engines`);
+		log.debug(`Testing already-loaded engines`);
 
 		for (let name in Engines) {
+			log.debug(`Testing already-loaded engine ${name}`);
 			await testEngine(name);
 		}
+
+		log.debug(`Done testing already-loaded engines`);
 	})().catch(error => {
-		console.error(`Output from testing already-loaded engines:`, error);
+		log.error(`Output from testing already-loaded engines:`, error);
 	});
 };
 
 // Register the default engine, node-persist
-register('node-persist', require('./node-persist'));
+/* log.debug(`Registering node-persist`);
+register('node-persist', require('./node-persist')); */

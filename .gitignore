@@ -48,7 +48,7 @@ typings/
 *.tsbuildinfo
 
 # Cache directory
-.node-cache-persist
+.npc
 
 # Optional npm cache directory
 .npm

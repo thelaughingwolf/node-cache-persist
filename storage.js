@@ -14,10 +14,11 @@
 //   onFlush: called when the memory cache flushes all keys
 //   onFlushStats: called when the memory cache flushes all stats; not required
 
-const { defaultsDeep } = require('lodash');
-const Engines = require('./engines');
+const defaultsDeep = require('lodash.defaultsdeep');
+const log = require('loglevel');
 
-const generateStorage = function(storageOpts, cache) {
+const generateStorage = async function(storageOpts, cache) {
+	const Engines = require('./engines');
 	const Storage = this;
 	const Cache = cache;
 	const defaults = {
@@ -61,7 +62,9 @@ const generateStorage = function(storageOpts, cache) {
 		_ready.reject = reject;
 	});
 
-	Storage.engine = Engines.load(storageOpts.engine, engineOpts, Cache);
+	log.debug(`Preparing to load engine ${storageOpts.engine}`);
+
+	Storage.engine = await Engines.load(storageOpts.engine, engineOpts, Cache);
 
 	Storage.load = async () => {
 		try {
@@ -71,7 +74,7 @@ const generateStorage = function(storageOpts, cache) {
 
 			let persistedRecords = await Storage.engine.load();
 
-			console.log(persistedRecords);
+			log.debug(persistedRecords);
 
 			loaded = true;
 			_ready.resolve(true);
@@ -89,9 +92,27 @@ const generateStorage = function(storageOpts, cache) {
 		}
 		return Storage.engine.set(key, val, ttl);
 	};
+	Storage.onMSet = async (pairs) => {
+		await Storage._ready;
+		if (Storage.engine.mset) {
+			return Storage.engine.mset(pairs);
+		}
+		return Promise.all(pairs.map(async pair => {
+			return await Storage.engine.set(pair.key, pair.val, pair.ttl);
+		}));
+	};
 	Storage.onDel = async (key) => {
 		await Storage._ready;
 		return Storage.engine.del(key);
+	};
+	Storage.onMDel = async (keys) => {
+		await Storage._ready;
+		if (Storage.engine.mdel) {
+			return Storage.engine.mdel(keys);
+		}
+		return Promise.all(keys.map(async key => {
+			return await Storage.engine.del(key);
+		}));
 	};
 	Storage.onExpired = async (key) => {
 		await Storage._ready;
@@ -100,6 +121,15 @@ const generateStorage = function(storageOpts, cache) {
 	Storage.onTtl = async (key, ttl) => {
 		await Storage._ready;
 		return Storage.engine.ttl(key, ttl);
+	}
+	Storage.onMTtl = async (pairs) => {
+		await Storage._ready;
+		if (Storage.engine.mttl) {
+			return Storage.engine.mttl(pairs);
+		}
+		return Promise.all(pairs.map(async pair => {
+			return await Storage.engine.ttl(pair.key, pair.ttl);
+		}));
 	}
 	Storage.onFlush = async () => {
 		await Storage._ready;
@@ -110,7 +140,11 @@ const generateStorage = function(storageOpts, cache) {
 		if (Storage.engine.flushStats) {
 			return Storage.engine.flushStats();
 		}
-		console.log("Stats flushed ¯\\_(ツ)_/¯");
+		log.info("Stats flushed ¯\\_(ツ)_/¯");
+	};
+	Storage.onClose = async () => {
+		await Storage._ready;
+		return Storage.engine.close();
 	};
 
 	return Storage;

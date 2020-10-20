@@ -1,10 +1,13 @@
 {
-  "name": "node-persistent-cache",
+  "name": "@thelaughingwolf/node-persistent-cache",
   "version": "1.0.0",
-  "description": "Cache using node-cache and backed by node-persist, with easy alternative engine installation",
+  "description": "Cache using node-cache with easy engine installation",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "test-engines -e all"
+  },
+  "bin": {
+    "test-engines": "./tests/cli.js"
   },
   "repository": {
     "type": "git",
@@ -26,11 +29,21 @@
   "homepage": "https://github.com/thelaughingwolf/node-persistent-cache#readme",
   "dependencies": {
     "bottleneck": "^2.19.5",
+    "commander": "^6.1.0",
     "lodash": "^4.17.20",
+    "lodash.clonedeep": "^4.5.0",
+    "lodash.defaultsdeep": "^4.6.1",
+    "lodash.isobject": "^3.0.2",
+    "lodash.merge": "^4.6.2",
+    "loglevel": "^1.7.0",
     "node-cache": "^5.1.2",
     "node-persist": "^3.1.0",
+    "npc-node-persist": "^1.0.3",
     "tape": "^5.0.1",
     "tape-promise": "^4.0.0"
   },
-  "devDependencies": {}
+  "devDependencies": {},
+  "directories": {
+    "test": "tests"
+  }
 }

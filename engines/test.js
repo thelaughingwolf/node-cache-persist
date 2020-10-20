@@ -1,27 +1,114 @@
-const NPC = require('../index');
+const NPC = require('../index')();
 const test = require('../tests/tape');
+const log = require('loglevel');
 //const SuiteRunner = require('../tests/suite-runner');
 
 const testEngine = function(name) {
+	const testLog = log.getLogger(`test-engine-${name}`);
+	testLog.setLevel('error');
+
 	const self = this;
 	const opts = {};
 
-	let syncCache
-	,	asyncCache;
+	return new Promise((resolve, reject) => {
+		let asyncCache;
 
-	test(`Test Engine ${name}`, async (t) => {
-		console.log(`Test engine with synchronous cache`);
+		test(`Test Engine ${name}`, async (t) => {
+			t.pass(`Test engine with asynchronous cache`);
 
-		syncCache = new NPC({
-			persist: {
-				engine: engineName,
-				prefix: `${engineName}-sync-tests`
-			}
+			// Async helper methods
+			const testAsyncSetVal = async (cache, type, val) => {
+				t.ok(await cache.set(type, val), `Setting cache with a ${type} value: ${JSON.stringify(val)}`);
+			};
+			const testAsyncGetVal = async (cache, type, val, cmpFn = 'equal') => {
+				let cached = await cache.get(type);
+				t[cmpFn](cached, val, `Getting a ${type} value from the cache: ${JSON.stringify(cached)}`);
+			};
+			const testAsyncVal = async (cache, type, val, cmpFn) => {
+				await testAsyncSetVal(cache, type, val);
+				await testAsyncGetVal(cache, type, val, cmpFn);
+			};
+
+			// Create asynchronous cache
+			asyncCache = await NPC.cache({
+				async: true,
+				persist: {
+					engine: name,
+					prefix: `tests/engines/${name}/async`
+				}
+			});
+			t.notEqual(asyncCache, undefined, `Created asynchronous cache`);
+
+			// Test all datatypes
+			await testAsyncVal(asyncCache, 'string', 'foobar');
+			await testAsyncVal(asyncCache, 'integer', 42);
+			await testAsyncVal(asyncCache, 'float', 6.023);
+			await testAsyncVal(asyncCache, 'boolean', false);
+			await testAsyncVal(asyncCache, 'array', [ 1, 2, 3 ], 'deepEqual');
+			await testAsyncVal(asyncCache, 'object', { foo: 'bar', uhoh: 'attention !', num: [ 1, 2, 3 ] }, 'deepEqual');
+
+			// Test TTL
+			await asyncCache.set('ttl-test', 'hullo', 0.05);
+			t.equal('hullo', asyncCache.get('ttl-test'), 'Placed a value in cache with a TTL of 0.05 seconds');
+			await new Promise((resolve) => { setTimeout(resolve, 30)});
+			t.equal('hullo', asyncCache.get('ttl-test'), 'Cache still has value');
+			await new Promise((resolve) => { setTimeout(resolve, 30)});
+			t.equal(undefined, asyncCache.get('ttl-test'), 'Cached value has been automatically cleared');
+
+			// Test setting async parallel
+			let lastAsyncParallel = { 'hello': 'there', 'very': [ 'long', 'value', 42, 3.14156] };
+			let asyncParallelActions = [
+				testAsyncSetVal(asyncCache, 'parallel', 1),
+				testAsyncSetVal(asyncCache, 'parallel', 'hello'),
+				testAsyncSetVal(asyncCache, 'parallel', true),
+				testAsyncSetVal(asyncCache, 'parallel', lastAsyncParallel), // <-- This is the value that should be set
+			];
+			await Promise.all(asyncParallelActions);
+
+			// Test taking a val
+			await asyncCache.set('takable', 'temporary val');
+			await testAsyncVal(asyncCache, 'takable', 'temporary val');
+			val = await asyncCache.take('takable');
+			t.equal(val, 'temporary val', 'Taking a val returns the val');
+			t.equal(undefined, asyncCache.get('takable'), 'Taking a val removes it from the cache');
+
+			// Test merging values
+			await asyncCache.merge('merge-test', {a: 'a', b: 'two', c: 3}, 'Merging a missing value sets it');
+			val = asyncCache.get('merge-test');
+			t.deepEqual(val, {a: 'a', b: 'two', c: 3}, 'Merged-in value is unchanged');
+			await asyncCache.merge('merge-test', {a: 'A', c: [ 1, 2, 3 ]}, 'Merging an object into the val updates the saved val');
+			val = asyncCache.get('merge-test');
+			t.deepEqual(val, {a: 'A', b: 'two', c: [ 1, 2, 3 ]}, 'Stored value is now merged');
+
+			// Test closing & restoring the cache
+			t.doesNotThrow(asyncCache.close, undefined, `Closed cache to test persistence`);
+			asyncCache = await NPC.cache({
+				async: true,
+				persist: {
+					engine: name,
+					prefix: `tests/engines/${name}/async`
+				}
+			});
+			t.ok(asyncCache, `Re-opened cache`);
+
+			// Test all persisted data, including parallel data
+			await testAsyncGetVal(asyncCache, 'string', 'foobar');
+			await testAsyncGetVal(asyncCache, 'integer', 42);
+			await testAsyncGetVal(asyncCache, 'float', 6.023);
+			await testAsyncGetVal(asyncCache, 'boolean', false);
+			await testAsyncGetVal(asyncCache, 'array', [ 1, 2, 3 ], 'deepEqual');
+			await testAsyncGetVal(asyncCache, 'object', { foo: 'bar', uhoh: 'attention !', num: [ 1, 2, 3 ] }, 'deepEqual');
+			await testAsyncGetVal(asyncCache, 'parallel', lastAsyncParallel, 'deepEqual');
+
+			// Test closing the cache
+			t.doesNotThrow(asyncCache.flushAll, undefined, `Flushed all data from cache`);
+
+			t.end();
 		});
 
-		t.notEqual(syncCache, undefined, `Failed to create synchronous cache`);
+		test.onFailure(reject);
 
-		await syncCache.load();
+		test.onFinish(resolve);
 	});
 
 	const tests = {
@@ -31,21 +118,21 @@ const testEngine = function(name) {
 				suite: [
 					{	title: `should create a new synchronous cache`,
 						test: async () => {
-							console.log(`Preparing to create a new synchronous cache`);
-					
+							testLog.info(`Preparing to create a new synchronous cache`);
+
 							syncCache = new ncp({
 								persist: {
 									engine: engineName,
 									prefix: `${engineName}-sync-tests`
 								}
 							});
-					
-							console.log(`Created the cache:`, syncCache);
-					
+
+							testLog.info(`Created the cache:`, syncCache);
+
 							assert.notStrictEqual(syncCache, undefined, `No synchronous cache was generated`);
 							await syncCache.load();
-					
-							console.log(`syncCache:`, syncCache.dump());
+
+							testLog.info(`syncCache:`, syncCache.dump());
 						}
 					},
 					{	title: `should set a string value`,
@@ -102,8 +189,8 @@ const testEngine = function(name) {
 				suite: [
 					{	title: `should create a new asynchronous cache`,
 						test: async () => {
-							console.log(`Preparing to create a new synchronous cache`);
-					
+							testLog.info(`Preparing to create a new synchronous cache`);
+
 							asyncCache = new ncp({
 								async: true,
 								persist: {
@@ -111,13 +198,13 @@ const testEngine = function(name) {
 									prefix: `${engineName}-sync-tests`
 								}
 							});
-					
-							console.log(`Created the cache:`, syncCache);
-					
+
+							testLog.info(`Created the cache:`, syncCache);
+
 							assert.notStrictEqual(asyncCache, undefined, `No synchronous cache was generated`);
 							await asyncCache.load();
-					
-							console.log(`asyncCache:`, asyncCache.dump());
+
+							testLog.info(`asyncCache:`, asyncCache.dump());
 						}
 					},
 					{	title: `should set a string value`,

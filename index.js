@@ -1,189 +1,221 @@
-const { defaultsDeep, isObject, isArray, merge, cloneDeep } = require('lodash');
+const defaultsDeep = require('lodash.defaultsdeep');
+const isObject = require('lodash.isobject');
+const merge = require('lodash.merge');
+const cloneDeep = require('lodash.clonedeep');
 const NodeCache = require('node-cache');
-const StorageEngine = require('./storage');
+const log = require('loglevel');
 
-const defaults = {
-	async: false,
+log.setDefaultLevel('warn');
+
+log.info(`Running from CWD ${process.cwd()}`);
+
+const baseDefaults = {
+	logLevel: 'warn',
 	persist: {
+		engine: 'node-persist',
 		prefix: ''
 	}
 };
 
-const generateCache = function (opts = {}) {
-	console.log(`Creating a new node-cache-persist!`, opts);
+const NodePersistentCache = (opts) => {
+	const NPC = {};
 
-	const Cache = this;
+	const defaults = cloneDeep(baseDefaults);
 
-	const storageOpts = opts.persist === true ? {} : (opts.persist ? opts.persist : null);
-	defaultsDeep(opts, defaults);
-	delete opts.persist;
+	NPC.engines = require('./engines');
+	NPC.config = (opts) => {
+		if (opts.testEngines) {
+			NPC.engines.toggleTests();
+			delete opts.testEngines;
+		}
 
-	if (storageOpts) {
-		defaultsDeep(storageOpts, defaults.persist);
+		if (opts !== undefined) {
+			log.debug(`Merging in new opts`, opts);
+			merge(defaults, opts);
+		}
+		return cloneDeep(defaults);
+	};
+	NPC.cache = async (opts) => {
+		const newCache = await new generateCache(opts);
+		return newCache;
+	};
+
+	const StorageEngine = require('./storage');
+
+	if (opts !== undefined) {
+		NPC.config(opts);
 	}
 
-	// This setting determines whether the cache is synchronous
-	//   and eventually persistent, or asynchronous and reliably persistent
-	// In default, sync mode, functions as a dropin replacement for node-cache
-	//   with the caveat that data is not persisted the moment a call completes
-	// In async mode, all methods are asynchronous and all data is guaranteed
-	//   to be persisted once the call completes
-	const mode = (opts.async === true) ? 'async' : 'sync';
+	const generateCache = function (opts = {}) {
+		const Cache = this;
 
-	delete opts.async;
+		defaultsDeep(opts, defaults);
 
-	const MemCache = new NodeCache(opts);
+		const storageOpts = (opts.persist === false || opts.persist === null) ? null : (opts.persist === true ? {} : opts.persist);
 
-	let exposedMethods = [ 'get', 'mget', 'set', 'mset', 'del', 'take', 'ttl', 'getTtl', 'keys', 'has', 'getStats', 'flushAll', 'flushStats' ];
-	let asyncMethods =   [ 'set', 'mset', 'del', 'ttl', 'take', 'merge' ];
+		delete opts.persist;
 
-	let modeWrapper = (name, method) => {
-		let methodMode;
-		if (asyncMethods.indexOf(name) === -1) {
-			methodMode = 'sync';
-		} else {
-			methodMode = mode;
+		log.debug(`Creating a new node-persistent-cache!`, { opts, storageOpts });
+
+		if (storageOpts) {
+			defaultsDeep(storageOpts, defaults.persist);
 		}
-		if (methodMode === 'async') {
-			return async (...args) => {
-				return method.apply(null, args);
-			};
-		} else {
-			return (...args) => {
-				return method.apply(null, args);
-			};
+
+		const MemCache = new NodeCache(opts);
+
+		let exposedMethods = [ 'get', 'mget', 'set', 'mset', 'del', 'take', 'ttl', 'getTtl', 'keys', 'has', 'getStats', 'flushAll', 'flushStats' ];
+		let asyncMethods =   [ 'set', 'mset', 'del', 'ttl', 'take', 'merge' ];
+
+		for (let i = 0; i < exposedMethods.length; ++i) {
+			((k) => {
+				const MemCacheMethod = MemCache[k];
+				if (typeof MemCacheMethod === 'function') {
+					if (asyncMethods.indexOf(k) === -1) {
+						Cache[k] = (...args) => {
+							return MemCacheMethod.apply(null, args);
+						}
+					} else {
+						Cache[k] = async (...args) => {
+							return MemCacheMethod.apply(null, args);
+						}
+					}
+				}
+			})(exposedMethods[i]);
+		}
+
+		let verifyMerge = (dest, source) => {
+			if (!isObject(dest)) {
+				throw new Error(`Cannot merge into a non-object`);
+			} else if (!isObject(source)) {
+				throw new Error(`Cannot merge a non-object into an object`);
+			} else if (Array.isArray(source) && !Array.isArray(dest)) {
+				throw new Error(`Cannot merge an array into a non-array`);
+			} else if (!Array.isArray(source) && Array.isArray(dest)) {
+				throw new Error(`Cannot merge a non-array into an array`);
+			}
+			merge(dest, source);
 		};
-	};
 
-	for (let i = 0; i < exposedMethods.length; ++i) {
-		((k) => {
-			if (typeof(MemCache[k]) === 'function') {
-				Cache[k] = modeWrapper(k, MemCache[k]);
-
-				/* (...args) => {
-					return modeWrapper(MemCache[k])(args);
-				}; */
+		Cache.merge = async (key, val) => {
+			let curVal = MemCache.get(key)
+			,	curTtl = MemCache.getTtl(key)
+			,	newTtl;
+			if (curTtl) {
+				newTtl = (Date.now() - curTtl) / 1000;
 			}
-		})(exposedMethods[i]);
-	}
-
-	if (storageOpts) {
-		if (opts.useClones === false) {
-			console.warn(`By definition, data retrieved from persistent backup will be clones of the original!`);
-		}
-
-		const Storage = new StorageEngine(storageOpts, Cache);
-
-		// Overwrite .ttl so it calls Storage.onTtl
-		Cache.ttl = modeWrapper('ttl', (key, ttl = opts.stdTTL) => {
-			let storage = Storage.onTtl(key, ttl)
-			,	memCache = () => { MemCache.ttl(key, ttl); };
-
-			if (mode === 'async') {
-				return storage.then(memCache);
-			} else {
-				return memCache();
+			if (curVal) {
+				verifyMerge(curVal, val);
+				val = curVal;
 			}
-		});
-
-		if (mode === 'async') { // In async mode, all the updating methods return once data is persisted
-			Cache.set = async (key, val, ttl) => {
-				await Storage.onSet(key, val, ttl);
-				return MemCache.set(key, val, ttl);
-			};
-			Cache.mset = async (data = [ ]) => {
-				data.forEach(async (datum) => {
-					await Cache.set(datum.key, datum.val, datum.ttl);
-				});
-				return true;
-			};
-			Cache.del = async (key) => {
-				await Storage.onDel(key);
-				return MemCache.del(key);
-			};
-			Cache.ttl = async (key, ttl) => {
-				// node-cache uses TTLs in seconds
-				// Storage uses TTLs in milliseconds
-				await Storage.onTtl(key, ttl * 1000);
-				return MemCache.ttl(key, ttl);
-			};
-			Cache.flushAll = async (key, ttl) => {
-				await Storage.onFlush();
-				return MemCache.flushAll();
-			};
-		}
-
-		Cache.load = async () => {
-			const persistedData = await Storage.load();
-			await MemCache.mset(persistedData);
-
-			if (mode === 'sync') {
-				// Now that persisted data has been placed in the cache,
-				//   start persisting new data back to the backup
-				MemCache.on("set", Storage.onSet);
-				MemCache.on("del", Storage.onDel);
-				MemCache.on("expired", Storage.onExpired);
-				MemCache.on("flush", Storage.onFlush);
-				MemCache.on("flush_stats", Storage.onFlushStats);
-			}
-
-			return true;
+			return Cache.set(key, val, curTtl);
 		};
-	}
 
-	let verifyMerge = (val1, val2) => {
-		if (!isObject(val2)) {
-			throw new Error(`Cannot merge into a non-object`);
-		} else if (!isObject(val1)) {
-			throw new Error(`Cannot merge a non-object into an object`);
-		} else if (isArray(val1) && !isArray(val2)) {
-			throw new Error(`Cannot merge an array into a non-array`);
-		} else if (!isArray(val1) && isArray(val2)) {
-			throw new Error(`Cannot merge a non-array into an array`);
-		}
-		merge(val2, val1);
-	};
+		Cache.dump = () => {
+			let result = {}
+			,	keys = Cache.keys();
 
-	Cache.merge = modeWrapper('merge', (key, val) => {
-		let curVal = MemCache.get(key)
-		,	curTtl = MemCache.getTtl(key)
-		,	newTtl;
-		if (curTtl) {
-			newTtl = Date.now() - curTtl;
-		}
-		verifyMerge(val, curVal);
-		return Cache.set(key, curVal, curTtl);
-	});
+			keys.forEach((key) => {
+				let now = Date.now();
+				result[key] = {
+					val: Cache.get(key),
+					ts: Cache.getTtl(key)
+				};
+				if (result[key].ts) {
+					result[key].date = new Date(result[key].ts);
+					result[key].ttl = `${result[key].ts - now}ms`;
+				}
+			});
 
-	Cache.dump = () => {
-		let result = {}
-		,	keys = Cache.keys();
+			return result;
+		};
 
-		keys.forEach((key) => {
-			let now = Date.now();
-			result[key] = {
-				val: Cache.get(key),
-				ts: Cache.getTtl(key)
-			};
-			if (result[key].ts) {
-				result[key].date = new Date(result[key].ts);
-				result[key].ttl = `${result[key].ts - now}ms`;
+		if (storageOpts) {
+			if (opts.useClones === false) {
+				log.warn(`By definition, data retrieved from persistent backup will be clones of the original!`);
 			}
-		});
 
-		return result;
+			log.info(`Generating persistent storage:`, storageOpts);
+
+			return StorageEngine(storageOpts, Cache).then(storageEngine => {
+				const Storage = storageEngine;
+
+				// Overwrite .ttl so it calls Storage.onTtl
+				Cache.ttl = async (key, ttl = opts.stdTTL) => {
+					await Storage.onTtl(key, ttl);
+					return MemCache.ttl(key, ttl);
+				};
+
+				Cache.close = async () => {
+					MemCache.emit('close');
+					await Storage.close();
+					return MemCache.close();
+				};
+
+				// This captures any data that got entered into
+				//   the cache between creating the cache
+				//   and loading it
+				let curKeys = MemCache.keys()
+				,	curCachePairs = [ ];
+				for (let i = 0; i < curKeys.length; ++i) {
+					let curKey = curKeys[i];
+					curCachePairs.push({
+						key: curKey,
+						val: MemCache.get(curKey),
+						ttl: MemCache.getTtl(curKey)
+					});
+				}
+
+				Storage.onMSet(curCachePairs);
+
+				Cache.set = async (key, val, ttl) => {
+					await Storage.onSet(key, val, ttl);
+					return MemCache.set(key, val, ttl);
+				};
+				Cache.mset = async (data = [ ]) => {
+					await Storage.onMSet(data);
+					return true;
+				};
+				Cache.del = async (key) => {
+					await Storage.onDel(key);
+					return MemCache.del(key);
+				};
+				Cache.take = async (key) => {
+					await Storage.onDel(key);
+					return MemCache.take(key);
+				};
+				Cache.ttl = async (key, ttl) => {
+					// node-cache uses TTLs in seconds
+					// Storage uses TTLs in milliseconds
+					await Storage.onTtl(key, ttl * 1000);
+					return MemCache.ttl(key, ttl);
+				};
+				Cache.flushAll = async (key, ttl) => {
+					await Storage.onFlush();
+					return MemCache.flushAll();
+				};
+				Cache.close = async () => {
+					await Storage.onClose();
+					return MemCache.close();
+				};
+				Cache.load = async () => {
+					const persistedData = await Storage.load();
+					log.debug("persistedData:", persistedData);
+
+					await MemCache.mset(persistedData);
+
+					return true;
+				};
+
+				return Cache.load();
+			}).then(() => {
+				return Cache;
+			});
+		}
+
+		return Cache;
 	};
 
-	return Cache;
+	return NPC;
 };
 
-module.exports = generateCache;
-
-module.exports.configure = (opts) => {
-	merge(defaults, opts);
-};
-module.exports.getConfig = () => {
-	return cloneDeep(defaults);
-};
-
-module.exports.engines = require('./engines');
+module.exports = NodePersistentCache;
