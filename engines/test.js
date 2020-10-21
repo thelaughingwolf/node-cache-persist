@@ -20,22 +20,19 @@ const testEngine = function(name) {
 			const testAsyncSetVal = async (cache, type, val) => {
 				t.ok(await cache.set(type, val), `Setting cache with a ${type} value: ${JSON.stringify(val)}`);
 			};
-			const testAsyncGetVal = async (cache, type, val, cmpFn = 'equal') => {
-				let cached = await cache.get(type);
+			const testAsyncGetVal = (cache, type, val, cmpFn = 'equal') => {
+				let cached = cache.get(type);
 				t[cmpFn](cached, val, `Getting a ${type} value from the cache: ${JSON.stringify(cached)}`);
 			};
 			const testAsyncVal = async (cache, type, val, cmpFn) => {
 				await testAsyncSetVal(cache, type, val);
-				await testAsyncGetVal(cache, type, val, cmpFn);
+				testAsyncGetVal(cache, type, val, cmpFn);
 			};
 
 			// Create asynchronous cache
 			asyncCache = await NPC.cache({
-				async: true,
-				persist: {
-					engine: name,
-					prefix: `tests/engines/${name}/async`
-				}
+				engine: name,
+				prefix: `tests/engines/${name}/async`
 			});
 			t.notEqual(asyncCache, undefined, `Created asynchronous cache`);
 
@@ -83,25 +80,83 @@ const testEngine = function(name) {
 			// Test closing & restoring the cache
 			t.doesNotThrow(asyncCache.close, undefined, `Closed cache to test persistence`);
 			asyncCache = await NPC.cache({
-				async: true,
-				persist: {
-					engine: name,
-					prefix: `tests/engines/${name}/async`
-				}
+				engine: name,
+				prefix: `tests/engines/${name}/async`
 			});
 			t.ok(asyncCache, `Re-opened cache`);
 
 			// Test all persisted data, including parallel data
-			await testAsyncGetVal(asyncCache, 'string', 'foobar');
-			await testAsyncGetVal(asyncCache, 'integer', 42);
-			await testAsyncGetVal(asyncCache, 'float', 6.023);
-			await testAsyncGetVal(asyncCache, 'boolean', false);
-			await testAsyncGetVal(asyncCache, 'array', [ 1, 2, 3 ], 'deepEqual');
-			await testAsyncGetVal(asyncCache, 'object', { foo: 'bar', uhoh: 'attention !', num: [ 1, 2, 3 ] }, 'deepEqual');
-			await testAsyncGetVal(asyncCache, 'parallel', lastAsyncParallel, 'deepEqual');
+			testAsyncGetVal(asyncCache, 'string', 'foobar');
+			testAsyncGetVal(asyncCache, 'integer', 42);
+			testAsyncGetVal(asyncCache, 'float', 6.023);
+			testAsyncGetVal(asyncCache, 'boolean', false);
+			testAsyncGetVal(asyncCache, 'array', [ 1, 2, 3 ], 'deepEqual');
+			testAsyncGetVal(asyncCache, 'object', { foo: 'bar', uhoh: 'attention !', num: [ 1, 2, 3 ] }, 'deepEqual');
+			testAsyncGetVal(asyncCache, 'parallel', lastAsyncParallel, 'deepEqual');
 
 			// Test closing the cache
 			t.doesNotThrow(asyncCache.flushAll, undefined, `Flushed all data from cache`);
+
+			// Test multiple simultaneous caches
+			let multicache = [
+				await NPC.cache({
+					engine: name,
+					prefix: `tests/engines/${name}/multi1`
+				}),
+				await NPC.cache({
+					engine: name,
+					prefix: `tests/engines/${name}/multi2`
+				}),
+				await NPC.cache({
+					engine: name,
+					prefix: `tests/engines/${name}/multi3`
+				}),
+				await NPC.cache({
+					engine: name,
+					prefix: `tests/engines/${name}/multi4`
+				}),
+			];
+
+			let multival = [ 'one', 2, 'THREE', 4.0 ];
+
+			await testAsyncVal(multicache[0], 'multi-val0', multival[0]);
+			await testAsyncVal(multicache[1], 'multi-val1', multival[1]);
+			await testAsyncVal(multicache[2], 'multi-val2', multival[2]);
+			await testAsyncVal(multicache[3], 'multi-val3', multival[3]);
+
+			await multicache[0].close();
+			t.pass(`Closed multicache[0]`);
+			await multicache[1].close();
+			t.pass(`Closed multicache[1]`);
+			await multicache[2].close();
+			t.pass(`Closed multicache[2]`);
+			await multicache[3].close();
+			t.pass(`Closed multicache[3]`);
+
+			// Restore the multicaches
+			multicache = [
+				await NPC.cache({
+					engine: name,
+					prefix: `tests/engines/${name}/multi1`
+				}),
+				await NPC.cache({
+					engine: name,
+					prefix: `tests/engines/${name}/multi2`
+				}),
+				await NPC.cache({
+					engine: name,
+					prefix: `tests/engines/${name}/multi3`
+				}),
+				await NPC.cache({
+					engine: name,
+					prefix: `tests/engines/${name}/multi4`
+				}),
+			];
+
+			testAsyncGetVal(multicache[0], 'multi-val0', multival[0]);
+			testAsyncGetVal(multicache[1], 'multi-val1', multival[1]);
+			testAsyncGetVal(multicache[2], 'multi-val2', multival[2]);
+			testAsyncGetVal(multicache[3], 'multi-val3', multival[3]);
 
 			t.end();
 		});
@@ -110,198 +165,6 @@ const testEngine = function(name) {
 
 		test.onFinish(resolve);
 	});
-
-	const tests = {
-		title: `Test Engine ${name}`,
-		suite: [
-			{	title: `Test engine with synchronous cache`,
-				suite: [
-					{	title: `should create a new synchronous cache`,
-						test: async () => {
-							testLog.info(`Preparing to create a new synchronous cache`);
-
-							syncCache = new ncp({
-								persist: {
-									engine: engineName,
-									prefix: `${engineName}-sync-tests`
-								}
-							});
-
-							testLog.info(`Created the cache:`, syncCache);
-
-							assert.notStrictEqual(syncCache, undefined, `No synchronous cache was generated`);
-							await syncCache.load();
-
-							testLog.info(`syncCache:`, syncCache.dump());
-						}
-					},
-					{	title: `should set a string value`,
-						test: async () => {
-							let val = 'foobar';
-							syncCache.set('string', val);
-							let cached = syncCache.get('string');
-							assert.strictEqual(cached, val, `String value was not returned`);
-						}
-					},
-					{	title: `should set an integer value`,
-						test: async () => {
-							let val = 1;
-							syncCache.set('integer', val);
-							let cached = syncCache.get('integer');
-							assert.strictEqual(cached, val, `Integer value was not returned`);
-						}
-					},
-					{	title: `should set a float value`,
-						test: async () => {
-							let val = 3.14156;
-							syncCache.set('float', val);
-							let cached = syncCache.get('float');
-							assert.strictEqual(cached, val, `Float value was not returned`);
-						}
-					},
-					{	title: `should set a boolean value`,
-						test: async () => {
-							let val = true;
-							syncCache.set('boolean', val);
-							let cached = syncCache.get('boolean')
-							assert.strictEqual(cached, val, `Boolean value was not returned`);
-						}
-					},
-					{	title: `should set an array value`,
-						test: async () => {
-							let val = [ 1, 2, 3 ];
-							syncCache.set('array', val);
-							let cached = syncCache.get('array');
-							assert.strictEqual(JSON.stringify(cached), JSON.stringify(val), `Array value was not returned`);
-						}
-					},
-					{	title: `should set an object value`,
-						test: async () => {
-							let val = { foo: 'bar', uhoh: 'attention !', num: [ 1, 2, 3 ] };
-							syncCache.set('object', val);
-							let cached = syncCache.get('object');
-							assert.strictEqual(JSON.stringify(cached), JSON.stringify(val), `Object value was not returned`);
-						}
-					}
-				]
-			},
-			{	title: `Test engine with asynchronous cache`,
-				suite: [
-					{	title: `should create a new asynchronous cache`,
-						test: async () => {
-							testLog.info(`Preparing to create a new synchronous cache`);
-
-							asyncCache = new ncp({
-								async: true,
-								persist: {
-									engine: engineName,
-									prefix: `${engineName}-sync-tests`
-								}
-							});
-
-							testLog.info(`Created the cache:`, syncCache);
-
-							assert.notStrictEqual(asyncCache, undefined, `No synchronous cache was generated`);
-							await asyncCache.load();
-
-							testLog.info(`asyncCache:`, asyncCache.dump());
-						}
-					},
-					{	title: `should set a string value`,
-						test: async () => {
-							let val = 'foobar';
-							await asyncCache.set('string', val);
-							let cached = await asyncCache.get('string');
-							assert.strictEqual(cached, val, `String value was not returned`);
-						}
-					},
-					{	title: `should set an integer value`,
-						test: async () => {
-							let val = 1;
-							await asyncCache.set('integer', val);
-							let cached = await asyncCache.get('integer');
-							assert.strictEqual(cached, val, `Integer value was not returned`);
-						}
-					},
-					{	title: `should set a float value`,
-						test: async () => {
-							let val = 3.14156;
-							await asyncCache.set('float', val);
-							let cached = await asyncCache.get('float');
-							assert.strictEqual(cached, val, `Float value was not returned`);
-						}
-					},
-					{	title: `should set a boolean value`,
-						test: async () => {
-							let val = true;
-							await asyncCache.set('boolean', val);
-							let cached = await asyncCache.get('boolean')
-							assert.strictEqual(cached, val, `Boolean value was not returned`);
-						}
-					},
-					{	title: `should set an array value`,
-						test: async () => {
-							let val = [ 1, 2, 3 ];
-							await asyncCache.set('array', val);
-							let cached = await asyncCache.get('array');
-							assert.strictEqual(JSON.stringify(cached), JSON.stringify(val), `Array value was not returned`);
-						}
-					},
-					{	title: `should set an object value`,
-						test: async () => {
-							let val = { foo: 'bar', uhoh: 'attention !', num: [ 1, 2, 3 ] };
-							await asyncCache.set('object', val);
-							let cached = await asyncCache.get('object');
-							assert.strictEqual(JSON.stringify(cached), JSON.stringify(val), `Object value was not returned`);
-						}
-					}
-				]
-			}
-		]
-	};
-
-	/* const suiteRunner = new SuiteRunner(tests);
-
-	runner.suite(``, () => {
-		describe(`Testing synchronous version of cache`, () => {
-			let syncCache;
-			it(``, );
-
-			it(`should set an string value`, () => {
-				syncCache.set('string', 'foobar');
-				assert.strictEqual(syncCache.get('string'), 'foobar', `String value was not returned`);
-			});
-
-			it(`should set an integer value`, () => {
-				syncCache.set('integer', 1);
-				assert.strictEqual(syncCache.get('integer'), 1, `Integer value was not returned`);
-			});
-
-			it(`should set a float value`, () => {
-				syncCache.set('float', 3.14156);
-				assert.strictEqual(syncCache.get('float'), 3.14156, `Float value was not returned`);
-			});
-
-			it(`should set a boolean value`, () => {
-				syncCache.set('boolean', true);
-				assert.strictEqual(syncCache.get('boolean'), true, `Boolean value was not returned`);
-			});
-
-			it(`should set an array value`, () => {
-				let val = [ 1, 2, 3 ];
-				syncCache.set('array', val);
-				assert.strictEqual(JSON.stringify(syncCache.get('array')), JSON.stringify(val), `Array value was not returned`);
-			});
-
-			it(`should set an object value`, () => {
-				let val = { foo: 'bar', uhoh: 'attention !', num: [ 1, 2, 3 ] };
-				syncCache.set('object', val);
-				assert.strictEqual(JSON.stringify(syncCache.get('object')), JSON.stringify(val), `Object value was not returned`);
-			});
-		});
-	});
-
-	return suiteRunner.run(); */
 };
 
 module.exports = testEngine;
