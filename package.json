@@ -1,6 +1,6 @@
 {
   "name": "node-persistent-cache",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Cache using node-cache with easy engine installation",
   "main": "index.js",
   "scripts": {

@@ -2,6 +2,7 @@
 const log = require('loglevel');
 const { Command } = require('commander');
 const program = new Command();
+const npcLog = log.getLogger('npc-main');
 
 const parseEngines = (engineInput) => {
 	const engines = {
@@ -15,7 +16,7 @@ const parseEngines = (engineInput) => {
 		engineList = engineInput.split(/\s,\s|\s;\s/);
 	}
 
-	log.info(`Will attempt to test ${engineInput === 'all' ? 'all known' : 'these specified'} engines: ${engineList.join(' ')}`);
+	npcLog.info(`Will attempt to test ${engineInput === 'all' ? 'all known' : 'these specified'} engines: ${engineList.join(' ')}`);
 
 	if (!engineList.length) {
 		throw new Error(`No engines specified to test`);
@@ -26,7 +27,7 @@ const parseEngines = (engineInput) => {
 		try {
 			engines[engineName] = require(engineName);
 		} catch (err) {
-			log.error(`No '${engineName}' engine installed`);
+			npcLog.error(`No '${engineName}' engine installed`);
 		}
 	}
 
@@ -53,5 +54,5 @@ program
 		}
 	}
 })().catch((error) => {
-	log.error(error);
+	npcLog.error(error);
 });

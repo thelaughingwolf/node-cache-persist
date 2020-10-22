@@ -1,5 +1,6 @@
 const Engines = {};
 const log = require('loglevel');
+const npcLog = log.getLogger('npc-main');
 
 let testEngines = false;
 
@@ -20,13 +21,13 @@ const register = (name, engine) => {
 	Engines[name] = engine;
 
 	if (testEngines) {
-		log.debug(`testEngines is on, so test engine ${name}`);
+		npcLog.debug(`testEngines is on, so test engine ${name}`);
 		testEngine(name);
 	}
 };
 
 const load = (name, opts, cache) => {
-	log.debug(`Loading new ${name} engine:`, opts);
+	npcLog.debug(`Loading new ${name} engine:`, opts);
 	if (!Engines[name]) {
 		throw new Error(`No persistent storage engine ${name} is registered`);
 	}
@@ -36,9 +37,9 @@ const load = (name, opts, cache) => {
 
 const testEngine = (name) => {
 	return require(`./test`)(name).then(() => {
-		log.info(`Engine ${name} passed all tests!`);
+		npcLog.info(`Engine ${name} passed all tests!`);
 	}).catch((error) => {
-		log.error(`Oh dear, there were failures:`, error);
+		npcLog.error(`Oh dear, there were failures:`, error);
 	});
 };
 
@@ -51,19 +52,15 @@ module.exports.toggleTests = () => {
 	testEngines = true;
 
 	(async () => {
-		log.debug(`Testing already-loaded engines`);
+		npcLog.debug(`Testing already-loaded engines`);
 
 		for (let name in Engines) {
-			log.debug(`Testing already-loaded engine ${name}`);
+			npcLog.debug(`Testing already-loaded engine ${name}`);
 			await testEngine(name);
 		}
 
-		log.debug(`Done testing already-loaded engines`);
+		npcLog.debug(`Done testing already-loaded engines`);
 	})().catch(error => {
-		log.error(`Output from testing already-loaded engines:`, error);
+		npcLog.error(`Output from testing already-loaded engines:`, error);
 	});
 };
-
-// Register the default engine, node-persist
-/* log.debug(`Registering node-persist`);
-register('node-persist', require('./node-persist')); */

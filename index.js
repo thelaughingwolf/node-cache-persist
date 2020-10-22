@@ -4,8 +4,6 @@ const merge = require('lodash.merge');
 const log = require('loglevel');
 const generateCache = require('./generate-cache');
 
-log.setDefaultLevel('warn');
-
 const baseDefaults = {
 	logLevel: 'warn',
 	prefix: '',
@@ -15,17 +13,22 @@ const baseDefaults = {
 
 const NodePersistentCache = (opts) => {
 	const defaults = cloneDeep(baseDefaults);
+	const npcLog = log.getLogger('npc-main');
 
 	const NPC = {
+		log: npcLog,
 		engines: require('./engines'),
 		config: (configOpts) => {
 			if (configOpts !== undefined) {
+				if (configOpts.logLevel) {
+					NPC.log.setLevel(configOpts.logLevel);
+				}
 				if (configOpts.testEngines) {
 					NPC.engines.toggleTests();
 					delete configOpts.testEngines;
 				}
 
-				log.debug(`Merging in new config`, configOpts);
+				NPC.log.debug(`Merging in new config`, configOpts);
 				merge(defaults, configOpts);
 			}
 
@@ -49,6 +52,8 @@ const NodePersistentCache = (opts) => {
 	if (opts !== undefined) {
 		NPC.config(opts);
 	}
+
+	NPC.log.setLevel(defaults.logLevel);
 
 	return NPC;
 };
